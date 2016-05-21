@@ -4,21 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"encoding/json"
+	"bytes"
 	"log"
 )
-
-type Order struct {
-	orderType string
-	qty       int
-	direction string
-	account   string
-}
-
-type QuoteResponse struct {
-	Ok bool
-	Venue  string
-	Symbol string
-}
 
 type Client struct {
 	ApiKey string
@@ -26,34 +14,87 @@ type Client struct {
 	Stock  string
 }
 
-func (client *Client) Quote(qr *QuoteResponse) error {
-	r, err := client.get();
-	defer r.Body.Close()
-
-	if err != nil {
-		return err
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&qr); err != nil {
-		return err
-	}
-
-	return nil
+type Order struct {
+	Account   string
+	Direction string
+	OrderType string
+	Qty       int
+	Price     int
 }
 
-func (c *Client) get() (*http.Response, error) {
-	req, err := http.NewRequest("GET", c.url(), nil)
-	req.Header.Add("X-Starfighter-Authorization", c.ApiKey)
+type OrderResponse struct {
+	Ok bool
+	Qty int
+	Fills []OrderFill
+	Error string
+}
 
+type OrderFill struct {
+	Price int
+	Qty int
+	Ts string
+}
+
+type QuoteResponse struct {
+	Ok     bool
+	Venue  string
+	Symbol string
+	Error string
+}
+
+func (client *Client) Quote() (*QuoteResponse, error) {
+	req, err := http.NewRequest("GET", client.url("quote"), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return http.DefaultClient.Do(req)
+	response, err := http.DefaultClient.Do(req)
+	if (response != nil) {
+		defer response.Body.Close()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var qr QuoteResponse
+	if err := json.NewDecoder(response.Body).Decode(&qr); err != nil {
+		return nil, err
+	}
+
+	log.Printf("Received quote: %+v", qr)
+	return &qr, nil
 }
 
-func (c *Client) url() string {
-	url := fmt.Sprintf("https://api.stockfighter.io/ob/api/venues/%s/stocks/%s", c.Venue, c.Stock)
-	log.Printf("Url: %v", url)
+func (c *Client) PostOrder(order *Order) (*OrderResponse, error) {
+	payload, err := json.Marshal(order)
+	if err != nil {
+		return nil, err
+	}
+
+	request, err := http.NewRequest("POST", c.url("orders"), bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Add("X-Starfighter-Authorization", c.ApiKey)
+
+	response, err := http.DefaultClient.Do(request)
+	if (response != nil) {
+		defer response.Body.Close()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var or OrderResponse
+    if err := json.NewDecoder(response.Body).Decode(&or); err != nil {
+	    return nil, err
+    }
+
+	log.Printf("Received order response: %+v", or)
+	return &or, nil
+}
+
+func (c *Client) url(end string) string {
+	url := fmt.Sprintf("https://api.stockfighter.io/ob/api/venues/%s/stocks/%s/%s", c.Venue, c.Stock, end)
 	return url
 }
